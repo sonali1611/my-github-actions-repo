@@ -1,0 +1,75 @@
+# The name of the workflow shown in the GitHub Actions UI
+name: Build CI
+
+# This workflow will be triggered when:
+# - Code is pushed to the 'develop' branch
+# - A pull request is made targeting the 'develop' branch
+# - The workflow is manually triggered (workflow_dispatch)
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+jobs:
+  build:
+    # This job will run on a self-hosted runner with the label 'akash'
+    runs-on: [self-hosted, akash]
+
+    steps:
+    # Step 1: Check out the repository code
+    - name: Checkout code
+      uses: actions/checkout@v4   # Official GitHub Action that fetches the repository code
+
+    # Step 2: Set up Java JDK 17 using the Temurin distribution
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'        # Java version to use
+        distribution: 'temurin'   # Temurin = OpenJDK provided by Eclipse
+
+    # Step 3: Copy custom Maven settings.xml file into the .m2 directory
+    - name: Copy custom settings.xml
+      shell: powershell           # Using PowerShell shell (for Windows runners)
+      run: |
+        New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.m2"     # Create .m2 directory if it doesn't exist
+        Copy-Item -Path ".github\maven-settings\settings.xml" -Destination "$env:USERPROFILE\.m2\settings.xml" -Force
+        # Copy settings.xml which usually contains repository and authentication configuration
+
+    # Step 4: Calculate build version and set it as an environment variable
+    - name: Calculate and Set Version Number
+      id: version
+      run: |
+        $buildNumber = 10000 + $env:GITHUB_RUN_NUMBER           # Generate a build number starting from 10000
+        $version = "1.0.0.$buildNumber"                          # Create the full version string
+        echo "Calculated Version: $version"
+        echo "VERSION_NUMBER=$version" >> $env:GITHUB_ENV       # Save version to environment variable
+
+    # Step 5: Build the project using Maven (skip running tests)
+    - name: Build with Maven
+      run: mvn clean package -DskipTests     # Run Maven clean and package goals, skipping tests
+      env:
+        ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}        # Artifactory username from GitHub Secrets
+        ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}# Artifactory password from GitHub Secrets
+
+    # Step 6: Upload generated JAR files as build artifacts
+    - name: Publish Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ckpportal-${{ env.VERSION_NUMBER }}  # Name includes the calculated version
+        path: target/*.jar                         # Upload all .jar files from the target directory
+
+    # Step 7: Save the version number into a file
+    - name: Save version to file
+      run: |
+        echo "${{ env.VERSION_NUMBER }}" > version.txt   # Write the version number to version.txt
+
+    # Step 8: Upload the version.txt file as an artifact
+    - name: Upload Version Info
+      uses: actions/upload-artifact@v4
+      with:
+        name: version-info                 # Artifact name
+        path: version.txt                 # Upload version.txt file
